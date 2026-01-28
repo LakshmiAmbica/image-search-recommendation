@@ -1,8 +1,9 @@
+streamlit
 torch
 torchvision
 torchaudio
 transformers
-Pillow
+pillow
 numpy
 pandas
-streamlit
+altair==4.2.2
