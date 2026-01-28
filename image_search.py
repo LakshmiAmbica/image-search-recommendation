@@ -12,12 +12,13 @@ import numpy as np
 # -----------------------------
 # Device setup
 # -----------------------------
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cpu"
+
 
 # -----------------------------
 # Load CSV
 # -----------------------------
-CSV_PATH = "data/test_products.csv"
+CSV_PATH = "clean_data.csv"
 df = pd.read_csv(CSV_PATH)
 
 # Clean columns
@@ -46,8 +47,15 @@ st.write("✅ Valid products:", len(df))
 # -----------------------------
 # Load CLIP model
 # -----------------------------
-model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+@st.cache_resource
+def load_clip():
+    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+    processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    model.eval()
+    return model, processor
+
+model, processor = load_clip()
+
 
 # -----------------------------
 # Image embeddings
@@ -142,3 +150,5 @@ if uploaded_file:
         st.write(f"**Category:** {prod.get('category','')}")
         st.write(f"**Brand:** {prod.get('brand','')}")
         st.markdown("---")
+
+
