@@ -10,21 +10,21 @@ from transformers import CLIPProcessor, CLIPModel
 import numpy as np
 
 # -----------------------------
-# Device setup
+# Device setup (CPU ONLY)
 # -----------------------------
 device = "cpu"
 
 # -----------------------------
-# Load CSV
+# Load CSV (ALL PRODUCTS)
 # -----------------------------
 CSV_PATH = "clean_data.csv"
 df = pd.read_csv(CSV_PATH)
 
-df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
 df.columns = df.columns.str.strip().str.lower()
 
 # -----------------------------
-# Load images safely
+# Load image safely
 # -----------------------------
 @st.cache_data
 def load_image(url):
@@ -36,7 +36,7 @@ def load_image(url):
         return None
 
 # -----------------------------
-# Load CLIP model
+# Load CLIP (DELAYED)
 # -----------------------------
 @st.cache_resource
 def load_clip():
@@ -45,13 +45,11 @@ def load_clip():
     model.eval()
     return model, processor
 
-model, processor = load_clip()
-
 # -----------------------------
 # Embedding functions (UNCHANGED)
 # -----------------------------
 @st.cache_data
-def get_image_embeddings(images):
+def get_image_embeddings(images, processor, model):
     embeddings = []
     for img in images:
         inputs = processor(images=img, return_tensors="pt").to(device)
@@ -62,7 +60,7 @@ def get_image_embeddings(images):
     return np.array(embeddings)
 
 @st.cache_data
-def get_text_embeddings(texts):
+def get_text_embeddings(texts, processor, model):
     inputs = processor(
         text=texts,
         return_tensors="pt",
@@ -96,18 +94,26 @@ if "prepared" not in st.session_state:
     st.session_state.prepared = False
 
 # -----------------------------
-# BUTTON: prepare engine
+# BUTTON (CRITICAL FIX)
 # -----------------------------
 if st.button("🚀 Prepare Recommendation Engine"):
-    with st.spinner("Loading images and computing embeddings..."):
+    with st.spinner("Loading model, images, and computing embeddings..."):
 
+        # Load CLIP ONLY here
+        model, processor = load_clip()
+
+        # Load images
         df["image_obj"] = df["imageurl"].apply(load_image)
         df = df[df["image_obj"].notnull()].reset_index(drop=True)
 
-        image_embeddings = get_image_embeddings(df["image_obj"])
-        text_embeddings = get_text_embeddings(df["text_data"].tolist())
+        # Compute embeddings
+        image_embeddings = get_image_embeddings(df["image_obj"], processor, model)
+        text_embeddings = get_text_embeddings(df["text_data"].tolist(), processor, model)
 
+        # Store in session
         st.session_state.df = df
+        st.session_state.model = model
+        st.session_state.processor = processor
         st.session_state.image_embeddings = image_embeddings
         st.session_state.text_embeddings = text_embeddings
         st.session_state.prepared = True
@@ -115,14 +121,16 @@ if st.button("🚀 Prepare Recommendation Engine"):
     st.success(f"System ready with {len(df)} products!")
 
 # -----------------------------
-# STOP if not prepared
+# STOP until prepared
 # -----------------------------
 if not st.session_state.prepared:
     st.info("Click **Prepare Recommendation Engine** to start")
     st.stop()
 
-# restore prepared data
+# Restore from session
 df = st.session_state.df
+model = st.session_state.model
+processor = st.session_state.processor
 image_embeddings = st.session_state.image_embeddings
 text_embeddings = st.session_state.text_embeddings
 
@@ -142,18 +150,31 @@ if uploaded_file:
     with torch.no_grad():
         q_img_emb = model.get_image_features(**inputs)
         q_img_emb = q_img_emb / q_img_emb.norm(p=2, dim=-1, keepdim=True)
+
     q_img_emb = q_img_emb.cpu().numpy()
 
+    # Image similarity
     img_similarity = image_embeddings @ q_img_emb.T
 
+    # Optional text hint
     hint = st.text_input("Optional hint (e.g. shoe, watch, makeup)")
 
     if hint.strip():
-        q_text_emb = get_text_embeddings([hint])
+        q_text_emb = get_text_embeddings([hint], processor, model)
         txt_similarity = text_embeddings @ q_text_emb.T
         final_score = 0.6 * img_similarity + 0.4 * txt_similarity
     else:
         final_score = img_similarity
 
-    top_idx = final_score.squeeze().args
+    top_idx = final_score.squeeze().argsort()[::-1][:5]
+
+    st.subheader("Recommended Products")
+    for i in top_idx:
+        prod = df.iloc[i]
+        st.image(prod["image_obj"], width=150)
+        st.write(f"**Name:** {prod.get('name','')}")
+        st.write(f"**Category:** {prod.get('category','')}")
+        st.write(f"**Brand:** {prod.get('brand','')}")
+        st.markdown("---")
+
 
